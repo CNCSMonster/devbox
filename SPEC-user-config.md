@@ -14,7 +14,7 @@
 - 用户通过 `~/.agents/devbox-norms.md` 记录个人偏好
 
 **用户痛点：**
-- 每次 `devbox init` 都要手动指定 `--image`、`--type`
+- 每次 `devbox init` 都要手动指定 `--image`
 - 容器里没有 AI 工具，每次都要手动装
 - 不同项目的容器配置不一致
 - AI 配置容器时不知道用户的习惯
@@ -90,8 +90,6 @@ Skill 层（skill 作者维护）
 
 ## 基础镜像
 - 默认使用 ghcr.io/cncsmonster/dotfiles:stable
-- Python 项目用 --type python
-- Node 项目用 --type node
 
 ## 必装工具
 每次配置容器时默认安装：
@@ -342,7 +340,6 @@ volumes:
   "version": 1,
   "defaults": {
     "image": "ghcr.io/cncsmonster/dotfiles:stable",
-    "type": "python",
     "shell": "zsh"
   }
 }
@@ -351,7 +348,6 @@ volumes:
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `defaults.image` | (CLI 内置 `ghcr.io/cncsmonster/dotfiles:latest`) | 默认基础镜像 |
-| `defaults.type` | (CLI 内置 `python`) | 默认项目类型 |
 | `defaults.shell` | (CLI 内置 `zsh`) | 默认 shell |
 
 **注意：** 这个配置只存简单的默认值。复杂的偏好（装什么工具、怎么复制）放在 `devbox-norms.md` 里，由 AI 理解和执行。
@@ -370,7 +366,6 @@ volumes:
   "imageName": "home-alice-work-myproject-a1b2c3d4e5:dev",
   "volumeName": "home-alice-work-myproject-a1b2c3d4e5-dev-home",
   "image": "ghcr.io/cncsmonster/dotfiles:stable",
-  "type": "python",
   "shell": "zsh",
   "identity": { ... },
   "createdAt": "2026-05-27T15:00:00+08:00"
@@ -382,7 +377,7 @@ volumes:
 `devbox init` 时的配置合并优先级：
 
 ```
-命令行参数 (--image, --type, --shell)
+命令行参数 (--image, --shell)
     ↓ 覆盖
 项目级 .devbox/config.json (已存在时)
     ↓ 覆盖
@@ -472,7 +467,7 @@ tmpdir=$(mktemp -d)
 cd "$tmpdir"
 
 # 3. AI 流程（模拟）
-devbox init --image ghcr.io/cncsmonster/dotfiles:stable --type generic
+devbox init --image ghcr.io/cncsmonster/dotfiles:stable
 
 # 4. 创建 host-side container-init.sh
 cat > .devbox/runtime/container-init.sh <<'EOF'

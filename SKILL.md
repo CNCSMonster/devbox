@@ -33,9 +33,9 @@ description: 为项目配置 Docker 开发容器环境。当用户通过 /devbox
 ### 核心原则
 
 1. **每次出方案** — 分析项目后输出配置方案，等用户确认。
-2. **不自动执行** — 除非用户明确说“可以”、“就这样”。
+2. **不自动执行** — 除非用户明确说"可以"、"就这样"。
 3. **读规范文档** — 每次读取 `~/.agents/devbox-norms.md`（如果存在）。
-4. **扫描项目结构** — 判断建议的 `--type`、image、是否需要 bootstrap 或 Dockerfile。
+4. **扫描项目结构** — 判断建议的 image、是否需要 bootstrap 或 Dockerfile。
 5. **初始化逻辑写脚本** — 根据用户确认，编辑 `.devbox/runtime/container-init.sh`，不要让 CLI 硬编码。
 6. **观察重复行为** — 发现用户反复做同样的事，建议更新规范文档。
 
@@ -55,7 +55,6 @@ description: 为项目配置 Docker 开发容器环境。当用户通过 /devbox
 │                                               │
 │ 模式: image mode（默认，无项目 Dockerfile）    │
 │ Image: ghcr.io/cncsmonster/dotfiles:latest    │  ← 可通过 devbox-norms.md 覆盖
-│ 项目类型: python                              │
 │                                               │
 │ Host-side bootstrap:                          │
 │   - 首次创建/重建后执行                         │
@@ -66,7 +65,7 @@ description: 为项目配置 Docker 开发容器环境。当用户通过 /devbox
 这个方案可以吗？需要调整什么？
          ↓
 用户确认后执行：
-  1. devbox init --type <detected> --image <image>
+  1. devbox init --image <image>
   2. 按方案编辑 .devbox/runtime/container-init.sh（如需要）
   3. devbox enter（首次 create/start/bootstrap/attach；后续只 attach）
   4. devbox verify
@@ -253,8 +252,6 @@ echo "Container initialization complete: $container"
 
 ## 基础镜像
 - 默认使用 <your-registry>/<your-image>:<tag>
-- Python 项目用 --type python
-- Node 项目用 --type node
 
 ## 初始化偏好
 - 安装工具：npm install -g <your-ai-cli>
@@ -273,7 +270,7 @@ echo "Container initialization complete: $container"
 ```bash
 command -v devbox || /path/to/devbox/install.sh
 
-devbox init --type python --image ghcr.io/cncsmonster/dotfiles:latest  # 默认镜像
+devbox init --image ghcr.io/cncsmonster/dotfiles:latest  # 默认镜像
 devbox config
 devbox config show
 
@@ -283,7 +280,7 @@ devbox enter
 devbox verify
 ```
 
-Init options: `--image <tag>`, `--type generic|python|node`, `--name <short>`.
+Init options: `--image <tag>`, `--name <short>`.
 
 ## Daily Commands
 
@@ -297,7 +294,7 @@ Init options: `--image <tag>`, `--type generic|python|node`, `--name <short>`.
 | `devbox config` | Show current config.json |
 | `devbox config show` | Show config and bootstrap script path |
 | `devbox verify` | Run health checks (no TTY needed) |
-| `devbox update key=val` | Update mutable fields (image, type, shell) |
+| `devbox update key=val` | Update mutable fields (image, shell) |
 | `devbox rebuild` | Recreate, start, and bootstrap container; preserve HOME volume |
 | `devbox clean` | Remove container + HOME volume (destructive) |
 

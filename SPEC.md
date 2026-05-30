@@ -53,7 +53,7 @@ Devbox v1 optimizes for three user-facing workflows. Users should not need to re
 
 2. Agent-assisted setup:
 
-   The user asks an AI agent to use this skill and CLI to configure the project-specific devbox environment. The agent may inspect the project structure and choose appropriate devbox options such as project type or base image with user approval when needed.
+   The user asks an AI agent to use this skill and CLI to configure the project-specific devbox environment. The agent may inspect the project structure and choose appropriate devbox options such as base image with user approval when needed.
 
    **The agent must verify the setup works before reporting success.** Verification steps:
 
@@ -241,7 +241,7 @@ devbox --help
 ```bash
 tmpdir="$(mktemp -d)"
 cd "$tmpdir"
-devbox init --type generic
+devbox init
 devbox config
 jq . .devbox/config.json
 grep -n "labels:" .devbox/docker-compose.yml
@@ -425,7 +425,6 @@ volume
   "imageName": "home-alice-work-client-a-backend-a1b2c3d4e5:dev",
   "volumeName": "home-alice-work-client-a-backend-a1b2c3d4e5-dev-home",
   "image": "ghcr.io/cncsmonster/dotfiles:latest",
-  "type": "python",
   "shell": "zsh",
   "identity": {
     "strategy": "full-path-hash-v1",
@@ -585,7 +584,7 @@ coreutils
 
 1. `install.sh` 可重复执行。
 2. `devbox --help` 正常。
-3. 临时目录执行 `devbox init --type generic` 正常。
+3. 临时目录执行 `devbox init` 正常。
 4. `.devbox/config.json` 包含：
    - `version`
    - `name`

@@ -90,7 +90,7 @@ This links:
 ```bash
 cd /path/to/project
 
-devbox init --type python --image ghcr.io/cncsmonster/dotfiles:latest
+devbox init --image ghcr.io/cncsmonster/dotfiles:latest
 
 devbox config
 

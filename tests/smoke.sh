@@ -137,7 +137,7 @@ chmod +x "$tmp/bin/docker"
 export PATH="$tmp/bin:$PATH"
 export DEVBOX_FAKE_DOCKER_STATE="$tmp"
 
-(cd "$tmp/p1/same" && "$DEVBOX" init --type generic >/dev/null && "$DEVBOX" config >/dev/null)
+(cd "$tmp/p1/same" && "$DEVBOX" init >/dev/null && "$DEVBOX" config >/dev/null)
 jq -e '
   .version == 1
   and .identity.strategy == "full-path-hash-v1"
@@ -162,19 +162,19 @@ grep -q 'Host-side devbox container bootstrap script' "$tmp/p1/same/.devbox/runt
 ! grep -q '/host-config/codex' "$tmp/p1/same/.devbox/docker-compose.yml"
 grep -q "name: $(jq -r .volumeName "$tmp/p1/same/.devbox/config.json")" "$tmp/p1/same/.devbox/docker-compose.yml"
 
-(cd "$tmp/p2/same" && "$DEVBOX" init --type generic >/dev/null)
+(cd "$tmp/p2/same" && "$DEVBOX" init >/dev/null)
 n1="$(jq -r .name "$tmp/p1/same/.devbox/config.json")"
 n2="$(jq -r .name "$tmp/p2/same/.devbox/config.json")"
 [ "$n1" != "$n2" ]
 
 mkdir -p "$tmp/fakehome/.codex"
 touch "$tmp/fakehome/.codex/config.toml" "$tmp/fakehome/.codex/model_catalog.json"
-(cd "$tmp/manual" && HOME="$tmp/fakehome" "$DEVBOX" init --type generic --name 'My_Project!!' >/dev/null)
+(cd "$tmp/manual" && HOME="$tmp/fakehome" "$DEVBOX" init --name 'My_Project!!' >/dev/null)
 jq -e '.name == "my-project" and .container == "my-project-dev" and .volumeName == "my-project-dev-home" and .identity.strategy == "full-path-hash-v1"' "$tmp/manual/.devbox/config.json" >/dev/null
 
 
 set +e
-(cd "$tmp/conflict" && "$DEVBOX" init --type generic --name conflict --force) >"$tmp/conflict.out" 2>&1
+(cd "$tmp/conflict" && "$DEVBOX" init --name conflict --force) >"$tmp/conflict.out" 2>&1
 conflict_rc=$?
 set -e
 [ "$conflict_rc" -ne 0 ]
@@ -182,7 +182,7 @@ grep -q 'not owned' "$tmp/conflict.out"
 [ ! -e "$tmp/conflict/.devbox/config.json" ]
 
 set +e
-(cd "$tmp/volumeonly" && "$DEVBOX" init --type generic --name volumeonly --force) >"$tmp/volumeonly.out" 2>&1
+(cd "$tmp/volumeonly" && "$DEVBOX" init --name volumeonly --force) >"$tmp/volumeonly.out" 2>&1
 volumeonly_rc=$?
 set -e
 [ "$volumeonly_rc" -ne 0 ]
@@ -190,15 +190,15 @@ grep -q 'Docker volume exists but is not owned' "$tmp/volumeonly.out"
 [ ! -e "$tmp/volumeonly/.devbox/config.json" ]
 
 set +e
-(cd "$tmp/badinspect" && "$DEVBOX" init --type generic --name badinspect) >"$tmp/badinspect.out" 2>&1
+(cd "$tmp/badinspect" && "$DEVBOX" init --name badinspect) >"$tmp/badinspect.out" 2>&1
 badinspect_rc=$?
 set -e
 [ "$badinspect_rc" -ne 0 ]
 grep -q 'Cannot reliably inspect Docker container' "$tmp/badinspect.out"
 [ ! -e "$tmp/badinspect/.devbox/config.json" ]
 
-(cd "$tmp/manual" && "$DEVBOX" update shell=bash type=node >/dev/null)
-jq -e '.shell == "bash" and .type == "node" and (.updatedAt | type == "string") and (.identity.strategy == "full-path-hash-v1")' "$tmp/manual/.devbox/config.json" >/dev/null
+(cd "$tmp/manual" && "$DEVBOX" update shell=bash >/dev/null)
+jq -e '.shell == "bash" and (.updatedAt | type == "string") and (.identity.strategy == "full-path-hash-v1")' "$tmp/manual/.devbox/config.json" >/dev/null
 before_update_config="$(sha256sum "$tmp/manual/.devbox/config.json" | awk '{print $1}')"
 set +e
 (cd "$tmp/manual" && "$DEVBOX" update image=) >"$tmp/update-empty-image.out" 2>&1
@@ -215,7 +215,7 @@ jq -e '(.image | length > 0) and (.shell | length > 0)' "$tmp/manual/.devbox/con
 
 # Host-side bootstrap runs only when marker is missing.
 mkdir -p "$tmp/bootstrap"
-(cd "$tmp/bootstrap" && "$DEVBOX" init --type generic --name boot >/dev/null)
+(cd "$tmp/bootstrap" && "$DEVBOX" init --name boot >/dev/null)
 cat > "$tmp/bootstrap/.devbox/runtime/container-init.sh" <<'BOOTEOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -234,7 +234,7 @@ printf 'y
 ! grep -q -- '--build' "$tmp/compose.log"
 
 # Existing owned resources permit safe operations.
-(cd "$tmp/ops" && "$DEVBOX" init --type generic --name ops >/dev/null)
+(cd "$tmp/ops" && "$DEVBOX" init --name ops >/dev/null)
 export DEVBOX_FAKE_OWNED_NAME=ops
 (cd "$tmp/ops" && "$DEVBOX" status >/dev/null)
 (cd "$tmp/ops" && "$DEVBOX" stop >/dev/null)
@@ -248,7 +248,7 @@ printf 'n\n' | (cd "$tmp/ops" && "$DEVBOX" clean >/dev/null)
 unset DEVBOX_FAKE_OWNED_NAME
 
 # Docker operation failures include the long-name recovery hint.
-(cd "$tmp/failops" && "$DEVBOX" init --type generic --name failops >/dev/null)
+(cd "$tmp/failops" && "$DEVBOX" init --name failops >/dev/null)
 export DEVBOX_FAKE_OWNED_NAME=failops
 export DEVBOX_FAKE_FAIL_DOCKER_CMD=start
 set +e
