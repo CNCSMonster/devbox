@@ -1,0 +1,909 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEVBOX_DIR=".devbox"
+CONFIG_FILE="$DEVBOX_DIR/config.json"
+COMPOSE_FILE="$DEVBOX_DIR/docker-compose.yml"
+RUNTIME_DIR="$DEVBOX_DIR/runtime"
+RUNTIME_CONTAINER_INIT="$RUNTIME_DIR/container-init.sh"
+IMAGE_RECIPE_DIR="$DEVBOX_DIR/image"
+
+DEFAULT_IMAGE="ghcr.io/cncsmonster/dotfiles:latest"
+DEFAULT_TYPE="python"
+DEVBOX_VERSION="1"
+IDENTITY_STRATEGY="full-path-hash-v1"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+log_info() { echo -e "${GREEN}✓${NC} $1"; }
+log_warn() { echo -e "${YELLOW}!${NC} $1"; }
+log_error() { echo -e "${RED}✗${NC} $1" >&2; }
+
+usage() {
+  cat <<'USAGE'
+Usage: devbox <command> [options]
+
+Commands:
+  init [options]        Initialize .devbox/ configuration
+  enter                 Start/attach to dev container
+  stop                  Stop container
+  restart               Restart and attach
+  rebuild               Recreate dev container, preserving project HOME volume
+  config                Show current configuration
+  config show           Show current devbox configuration and bootstrap script path
+  update <key>=<val>    Update mutable configuration fields (image, type, shell)
+  status                Show container status
+  verify                Verify container is ready (no TTY required)
+  clean                 Remove dev container and project HOME volume (destructive)
+
+Init options:
+  --image <image>       Configured dev image tag (default: ghcr.io/cncsmonster/dotfiles:latest)
+  --type <type>         Project type: generic, python, node (default: python)
+  --name <name>         Advanced: visible Docker/Compose resource name prefix
+  --force               Overwrite local .devbox/ files; never bypasses ownership checks
+
+Examples:
+  devbox init
+  devbox init --image ghcr.io/cncsmonster/dotfiles:stable --type python
+  devbox enter
+  devbox config show
+  devbox rebuild
+  devbox update image=my-project-devbox:local
+USAGE
+}
+
+require_cmd() {
+  local cmd="$1"
+  local hint="$2"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    log_error "Missing required command: $cmd. $hint"
+    exit 1
+  fi
+}
+
+require_jq() { require_cmd jq "Install jq before using devbox."; }
+
+realpath_portable() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$1"
+  else
+    python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
+  fi
+}
+
+sha256_hex() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+  else
+    python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$1"
+  fi
+}
+
+slugify() {
+  local input="$1"
+  local slug
+  slug="$(printf '%s' "$input" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's#[^a-z0-9]+#-#g; s#-+#-#g; s#^-##; s#-$##')"
+  if [ -z "$slug" ]; then
+    slug="project"
+  fi
+  printf '%s' "$slug"
+}
+
+canonical_project_root() { realpath_portable "$PWD"; }
+
+require_docker() {
+  require_cmd docker "Install Docker Engine before using devbox."
+  if ! docker info >/dev/null 2>&1; then
+    log_error "Docker daemon is unavailable. Start Docker before running this command."
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    log_error "Docker Compose v2 is unavailable. Ensure 'docker compose version' works."
+    exit 1
+  fi
+}
+
+current_docker_context() {
+  docker context show 2>/dev/null || echo default
+}
+
+identity_json() {
+  local root host uid context input digest identity_hash
+  root="$(canonical_project_root)"
+  host="$(hostname)"
+  uid="$(id -u)"
+  context="$(current_docker_context)"
+  input="${host}:${uid}:${context}:${root}"
+  digest="$(sha256_hex "$input")"
+  identity_hash="sha256:${digest}"
+  jq -n \
+    --arg strategy "$IDENTITY_STRATEGY" \
+    --arg projectRoot "$root" \
+    --arg identityHash "$identity_hash" \
+    --arg ownerUid "$uid" \
+    --arg host "$host" \
+    --arg dockerContext "$context" \
+    '{strategy:$strategy, projectRoot:$projectRoot, identityHash:$identityHash, ownerUid:$ownerUid, host:$host, dockerContext:$dockerContext}'
+}
+
+identity_hash_hex10() {
+  local identity_hash
+  identity_hash="$(jq -r '.identityHash' <<<"$1")"
+  printf '%s' "${identity_hash#sha256:}" | cut -c1-10
+}
+
+default_name_from_identity() {
+  local identity="$1"
+  local root suffix readable
+  root="$(jq -r '.projectRoot' <<<"$identity")"
+  suffix="$(identity_hash_hex10 "$identity")"
+  readable="$(slugify "${root#/}")"
+  printf '%s-%s' "$readable" "$suffix"
+}
+
+is_initialized() { [ -f "$CONFIG_FILE" ]; }
+
+get_config() {
+  local key="$1"
+  jq -r --arg k "$key" '.[$k] // empty' "$CONFIG_FILE" 2>/dev/null
+}
+
+get_container() { get_config "container"; }
+get_project() { get_config "composeProject"; }
+get_volume() { get_config "volumeName"; }
+
+inspect_missing_error() {
+  grep -Eiq 'No such (container|object|volume)|not found|no such volume' "$1"
+}
+
+container_exists() {
+  local container="$1" err rc
+  err="$(mktemp)"
+  if docker container inspect "$container" >/dev/null 2>"$err"; then
+    rm -f "$err"
+    return 0
+  else
+    rc=$?
+  fi
+  if inspect_missing_error "$err"; then
+    rm -f "$err"
+    return 1
+  fi
+  log_error "Cannot reliably inspect Docker container: $container"
+  cat "$err" >&2
+  rm -f "$err"
+  exit "$rc"
+}
+
+volume_exists() {
+  local volume="$1" err rc
+  err="$(mktemp)"
+  if docker volume inspect "$volume" >/dev/null 2>"$err"; then
+    rm -f "$err"
+    return 0
+  else
+    rc=$?
+  fi
+  if inspect_missing_error "$err"; then
+    rm -f "$err"
+    return 1
+  fi
+  log_error "Cannot reliably inspect Docker volume: $volume"
+  cat "$err" >&2
+  rm -f "$err"
+  exit "$rc"
+}
+
+container_running() {
+  [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || true)" = "true" ]
+}
+
+validate_type() {
+  case "$1" in
+    generic|python|node) ;;
+    *) log_error "Invalid type: $1. Expected generic, python, or node."; exit 1 ;;
+  esac
+}
+
+validate_update_field() {
+  local key="$1" value="$2"
+  case "$key" in
+    image|shell)
+      if [ -z "$value" ]; then
+        log_error "Invalid ${key}: value must be non-empty."
+        exit 1
+      fi
+      ;;
+    type)
+      validate_type "$value"
+      ;;
+  esac
+}
+
+candidate_json() {
+  local image="$1" type="$2" manual_name="$3"
+  local identity name container compose_project image_name volume_name now display_name
+  identity="$(identity_json)"
+  if [ -n "$manual_name" ]; then
+    name="$(slugify "$manual_name")"
+  else
+    name="$(default_name_from_identity "$identity")"
+  fi
+  container="${name}-dev"
+  compose_project="$name"
+  image_name="${name}:dev"
+  volume_name="${name}-dev-home"
+  display_name="$(jq -r '.projectRoot' <<<"$identity")"
+  now="$(date -Iseconds)"
+  jq -n \
+    --argjson version "$DEVBOX_VERSION" \
+    --arg name "$name" \
+    --arg displayName "$display_name" \
+    --arg container "$container" \
+    --arg composeProject "$compose_project" \
+    --arg imageName "$image_name" \
+    --arg volumeName "$volume_name" \
+    --arg image "$image" \
+    --arg type "$type" \
+    --arg shell "zsh" \
+    --argjson identity "$identity" \
+    --arg createdAt "$now" \
+    '{version:$version,name:$name,displayName:$displayName,container:$container,composeProject:$composeProject,imageName:$imageName,volumeName:$volumeName,image:$image,type:$type,shell:$shell,identity:$identity,createdAt:$createdAt}'
+}
+
+config_is_valid() {
+  [ -f "$CONFIG_FILE" ] && jq -e --arg strategy "$IDENTITY_STRATEGY" '
+    .version == 1
+    and (.name | type == "string" and test("^[a-z0-9]+(-[a-z0-9]+)*$"))
+    and (.displayName | type == "string")
+    and (.container == (.name + "-dev"))
+    and (.composeProject == .name)
+    and (.imageName == (.name + ":dev"))
+    and (.volumeName == (.name + "-dev-home"))
+    and (.image | type == "string" and length > 0)
+    and (.type | type == "string")
+    and (.shell | type == "string" and length > 0)
+    and (.identity.strategy == $strategy)
+    and (.identity.projectRoot | type == "string" and length > 0)
+    and (.displayName == .identity.projectRoot)
+    and (.identity.identityHash | test("^sha256:[0-9a-f]{64}$"))
+    and (.identity.ownerUid | type == "string" and test("^[0-9]+$"))
+    and (.identity.host | type == "string" and length > 0)
+    and (.identity.dockerContext | type == "string" and length > 0)
+    and (has("projectRootHash") | not)
+    and (.identity | has("projectRootHash") | not)
+  ' "$CONFIG_FILE" >/dev/null 2>&1
+}
+
+load_valid_config() {
+  require_jq
+  if ! is_initialized; then
+    log_error "Not initialized. Run: devbox init"
+    exit 1
+  fi
+  if ! config_is_valid; then
+    log_error "Invalid devbox config format. Run: devbox init --force"
+    exit 1
+  fi
+  cat "$CONFIG_FILE"
+}
+
+verify_current_identity_matches_config() {
+  local cfg="$1" current expected actual expected_root actual_root
+  current="$(identity_json)"
+  expected="$(jq -r '.identity.identityHash' <<<"$cfg")"
+  actual="$(jq -r '.identityHash' <<<"$current")"
+  expected_root="$(jq -r '.identity.projectRoot' <<<"$cfg")"
+  actual_root="$(jq -r '.projectRoot' <<<"$current")"
+  if [ "$expected" != "$actual" ] || [ "$expected_root" != "$actual_root" ]; then
+    log_error "Current project identity does not match .devbox/config.json."
+    echo "This can happen if the project path, user, host, or Docker context changed." >&2
+    exit 1
+  fi
+}
+
+label_value_container() {
+  docker inspect -f "{{ index .Config.Labels \"$2\" }}" "$1" 2>/dev/null || true
+}
+
+label_value_volume() {
+  docker volume inspect -f "{{ index .Labels \"$2\" }}" "$1" 2>/dev/null || true
+}
+
+resource_owned_by_config() {
+  local kind="$1" resource="$2" cfg="$3" get_label name uid hash
+  name="$(jq -r '.name' <<<"$cfg")"
+  uid="$(jq -r '.identity.ownerUid' <<<"$cfg")"
+  hash="$(jq -r '.identity.identityHash' <<<"$cfg")"
+  if [ "$kind" = "container" ]; then
+    get_label=label_value_container
+  else
+    get_label=label_value_volume
+  fi
+  [ "$($get_label "$resource" devbox.managed)" = "true" ] || return 1
+  [ "$($get_label "$resource" devbox.version)" = "$DEVBOX_VERSION" ] || return 1
+  [ "$($get_label "$resource" devbox.name)" = "$name" ] || return 1
+  [ "$($get_label "$resource" devbox.owner_uid)" = "$uid" ] || return 1
+  [ "$($get_label "$resource" devbox.identity_hash)" = "$hash" ] || return 1
+}
+
+ensure_existing_container_owned() {
+  local container="$1" cfg="$2"
+  if container_exists "$container"; then
+    if ! resource_owned_by_config container "$container" "$cfg"; then
+      log_error "Docker container exists but is not owned by this devbox project: $container"
+      echo "Choose a different name with 'devbox init --name <name> --force' or manually remove/rename the conflicting container outside devbox." >&2
+      exit 1
+    fi
+  fi
+}
+
+ensure_existing_volume_owned() {
+  local volume="$1" cfg="$2"
+  if volume_exists "$volume"; then
+    if ! resource_owned_by_config volume "$volume" "$cfg"; then
+      log_error "Docker volume exists but is not owned by this devbox project: $volume"
+      echo "Choose a different name with 'devbox init --name <name> --force' or manually remove/rename the conflicting volume outside devbox." >&2
+      exit 1
+    fi
+  fi
+}
+
+ensure_existing_resources_owned() {
+  local cfg="$1"
+  ensure_existing_container_owned "$(jq -r '.container' <<<"$cfg")" "$cfg"
+  ensure_existing_volume_owned "$(jq -r '.volumeName' <<<"$cfg")" "$cfg"
+}
+
+remove_container_if_exists() {
+  local container="$1"
+  if container_exists "$container"; then
+    docker rm -f "$container" >/dev/null || { compose_failure_hint; exit 1; }
+  fi
+}
+
+compose_failure_hint() {
+  cat >&2 <<'HINT'
+If this is caused by a very long generated Docker/Compose resource name, try a shorter manual name:
+  devbox init --name short-project --force
+HINT
+}
+
+compose_up() {
+  local project="$1"; shift
+  (cd "$DEVBOX_DIR" && docker compose -p "$project" up "$@") || { compose_failure_hint; exit 1; }
+}
+
+compose_down() {
+  local project="$1"; shift
+  (cd "$DEVBOX_DIR" && docker compose -p "$project" down "$@") || { compose_failure_hint; exit 1; }
+}
+
+write_config() {
+  local cfg="$1"
+  mkdir -p "$DEVBOX_DIR"
+  jq . <<<"$cfg" > "$CONFIG_FILE"
+}
+
+write_compose_from_config() {
+  local cfg="$1"
+  local name container volume_name image uid hash
+  name="$(jq -r '.name' <<<"$cfg")"
+  container="$(jq -r '.container' <<<"$cfg")"
+  volume_name="$(jq -r '.volumeName' <<<"$cfg")"
+  image="$(jq -r '.image' <<<"$cfg")"
+  uid="$(jq -r '.identity.ownerUid' <<<"$cfg")"
+  hash="$(jq -r '.identity.identityHash' <<<"$cfg")"
+
+  cat > "$COMPOSE_FILE" <<EOF_COMPOSE
+name: ${name}
+
+services:
+  dev:
+    image: ${image}
+    container_name: ${container}
+    working_dir: /app
+    labels:
+      devbox.managed: "true"
+      devbox.version: "${DEVBOX_VERSION}"
+      devbox.name: "${name}"
+      devbox.owner_uid: "${uid}"
+      devbox.identity_hash: "${hash}"
+    env_file:
+      - path: ../.env
+        required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PATH: /root/.local/share/mise/installs/node/latest/bin:/root/.local/share/mise/shims:/root/.local/bin:/root/.cargo/bin:/opt/project-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+    volumes:
+      - ..:/app
+      - dev-home:/root
+      - /app/.devbox
+    stdin_open: true
+    tty: true
+    command: sleep infinity
+
+volumes:
+  dev-home:
+    name: ${volume_name}
+    labels:
+      devbox.managed: "true"
+      devbox.version: "${DEVBOX_VERSION}"
+      devbox.name: "${name}"
+      devbox.owner_uid: "${uid}"
+      devbox.identity_hash: "${hash}"
+EOF_COMPOSE
+}
+
+write_host_container_init_template() {
+  mkdir -p "$RUNTIME_DIR"
+  if [ -f "$RUNTIME_CONTAINER_INIT" ]; then
+    return 0
+  fi
+  cat > "$RUNTIME_CONTAINER_INIT" <<'INITEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Host-side devbox container bootstrap script.
+# Runs on the host after the dev container has been created and started.
+# Args:
+#   $1: container name
+#
+# Customize this file to initialize the container with docker cp/docker exec.
+# Examples:
+#   docker cp "$HOME/.codex" "$container:/tmp/host-codex"
+#   docker exec "$container" bash -lc 'mkdir -p ~/.codex && cp -a /tmp/host-codex/. ~/.codex/'
+#
+# For symlink dereference, stage on the host first:
+#   tmp="$(mktemp -d)"; cp -aL "$HOME/.agents/skills/." "$tmp/skills/"; docker cp "$tmp/skills" "$container:/tmp/host-skills"
+
+container="${1:?container name required}"
+marker="/tmp/.container-init-executed"
+
+if docker exec "$container" test -f "$marker" 2>/dev/null; then
+  echo "Container already initialized: $container"
+  exit 0
+fi
+
+echo "Initializing container: $container"
+
+# Add project/user-specific initialization here.
+# Keep this script idempotent; if it fails before touching the marker,
+# devbox enter/rebuild will retry it next time bootstrap is needed.
+#
+# Common examples:
+#   # Copy codex config with host.docker.internal for LLM proxy
+#   if [ -d "$HOME/.codex" ]; then
+#     tmp="$(mktemp -d)"
+#     rsync -a --exclude='tmp/' --exclude='*.sqlite*' "$HOME/.codex/" "$tmp/"
+#     sed -i 's|http://127\.0\.0\.1|http://host.docker.internal|g' "$tmp/config.toml"
+#     docker cp "$tmp/." "$container:/root/.codex"
+#     rm -rf "$tmp"
+#   fi
+#
+#   # Copy agent skills
+#   if [ -d "$HOME/.agents/skills" ]; then
+#     tmp="$(mktemp -d)"
+#     cp -aL "$HOME/.agents/skills/." "$tmp/skills/"
+#     docker cp "$tmp/skills" "$container:/root/.agents/skills"
+#     rm -rf "$tmp"
+#   fi
+
+docker exec "$container" touch "$marker"
+echo "Container initialization complete: $container"
+INITEOF
+  chmod +x "$RUNTIME_CONTAINER_INIT"
+}
+
+write_generated_files() {
+  local cfg="$1"
+  mkdir -p "$DEVBOX_DIR" "$RUNTIME_DIR"
+
+  write_compose_from_config "$cfg"
+  write_host_container_init_template
+}
+
+container_bootstrapped() {
+  local container="$1"
+  docker exec "$container" test -f /tmp/.container-init-executed >/dev/null 2>&1
+}
+
+ensure_bootstrapped() {
+  local container="$1"
+  if container_bootstrapped "$container"; then
+    return 0
+  fi
+
+  if [ -x "$RUNTIME_CONTAINER_INIT" ]; then
+    log_info "Bootstrapping container with $RUNTIME_CONTAINER_INIT"
+    "$RUNTIME_CONTAINER_INIT" "$container" || { log_error "Container bootstrap failed."; exit 1; }
+  else
+    log_warn "No executable bootstrap script found: $RUNTIME_CONTAINER_INIT"
+    return 0
+  fi
+
+  if ! container_bootstrapped "$container"; then
+    log_error "Container bootstrap did not create marker: /tmp/.container-init-executed"
+    exit 1
+  fi
+}
+
+cmd_init() {
+  require_jq
+  require_docker
+
+  local image="$DEFAULT_IMAGE"
+  local type="$DEFAULT_TYPE"
+  local manual_name=""
+  local force=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --image) image="${2:?}"; shift 2 ;;
+      --type) type="${2:?}"; shift 2 ;;
+      --name) manual_name="${2:?}"; shift 2 ;;
+      --force) force=1; shift ;;
+      *) log_error "Unknown option: $1"; usage; exit 1 ;;
+    esac
+  done
+  validate_type "$type"
+
+  if [ -f "$CONFIG_FILE" ] && [ "$force" != "1" ]; then
+    if config_is_valid; then
+      log_warn "Already initialized. Use --force to overwrite local .devbox files."
+      jq . "$CONFIG_FILE"
+      exit 0
+    fi
+    log_error "Invalid devbox config format. Run: devbox init --force"
+    exit 1
+  fi
+
+  local cfg
+  cfg="$(candidate_json "$image" "$type" "$manual_name")"
+  ensure_existing_resources_owned "$cfg"
+
+  write_config "$cfg"
+  write_generated_files "$cfg"
+
+  echo ""
+  log_info "Devbox initialized!"
+  echo "  Project: $(jq -r '.name' <<<"$cfg")"
+  echo "  Container: $(jq -r '.container' <<<"$cfg")"
+  echo "  HOME volume: $(jq -r '.volumeName' <<<"$cfg")"
+  echo "  Image: $(jq -r '.image' <<<"$cfg")"
+  echo ""
+  echo "Next: devbox enter"
+}
+
+config_for_docker_command() {
+  require_jq
+  require_docker
+  local cfg
+  cfg="$(load_valid_config)"
+  verify_current_identity_matches_config "$cfg"
+  ensure_existing_resources_owned "$cfg"
+  printf '%s' "$cfg"
+}
+
+cmd_enter() {
+  local cfg container project shell
+  cfg="$(config_for_docker_command)"
+  container="$(jq -r '.container' <<<"$cfg")"
+  project="$(jq -r '.composeProject' <<<"$cfg")"
+  shell="$(jq -r '.shell // "zsh"' <<<"$cfg")"
+
+  if container_exists "$container"; then
+    log_info "Starting existing container: $container"
+    docker start "$container" >/dev/null || { compose_failure_hint; exit 1; }
+  else
+    log_info "Creating dev container: $container"
+    compose_up "$project" -d
+  fi
+
+  ensure_bootstrapped "$container"
+
+  log_info "Entering container..."
+  if ! docker exec -it "$container" "$shell"; then
+    if [ "$shell" != "bash" ]; then
+      docker exec -it "$container" bash || { compose_failure_hint; exit 1; }
+    else
+      compose_failure_hint
+      exit 1
+    fi
+  fi
+}
+
+cmd_stop() {
+  local cfg container
+  cfg="$(config_for_docker_command)"
+  container="$(jq -r '.container' <<<"$cfg")"
+  if container_exists "$container"; then
+    docker stop "$container" >/dev/null || { compose_failure_hint; exit 1; }
+    log_info "Stopped: $container"
+  else
+    log_warn "Container does not exist: $container"
+  fi
+}
+
+cmd_restart() {
+  local cfg container project shell
+  cfg="$(config_for_docker_command)"
+  container="$(jq -r '.container' <<<"$cfg")"
+  project="$(jq -r '.composeProject' <<<"$cfg")"
+  shell="$(jq -r '.shell // "zsh"' <<<"$cfg")"
+
+  if container_exists "$container"; then
+    log_info "Restarting container: $container"
+    docker restart "$container" >/dev/null || { compose_failure_hint; exit 1; }
+  else
+    log_info "Creating dev container: $container"
+    compose_up "$project" -d
+  fi
+
+  ensure_bootstrapped "$container"
+
+  log_info "Entering container..."
+  if ! docker exec -it "$container" "$shell"; then
+    if [ "$shell" != "bash" ]; then
+      docker exec -it "$container" bash || { compose_failure_hint; exit 1; }
+    else
+      compose_failure_hint
+      exit 1
+    fi
+  fi
+}
+
+cmd_rebuild() {
+  local cfg container project
+  cfg="$(config_for_docker_command)"
+  container="$(jq -r '.container' <<<"$cfg")"
+  project="$(jq -r '.composeProject' <<<"$cfg")"
+
+  log_warn "This will recreate and bootstrap the dev container while preserving the project HOME volume: $container"
+  read -p "Continue? [y/N] " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+  fi
+
+  log_info "Recreating dev container without removing HOME volume..."
+  remove_container_if_exists "$container"
+  compose_up "$project" -d --force-recreate
+  ensure_bootstrapped "$container"
+  log_info "Rebuilt and bootstrapped container: $container"
+  echo "Next: devbox enter"
+}
+
+cmd_config() {
+  require_jq
+  local action="${1:-}"
+
+  if [ "$action" = "show" ]; then
+    if [ -f "$CONFIG_FILE" ]; then
+      if ! config_is_valid; then
+        log_error "Invalid devbox config format. Run: devbox init --force"
+        exit 1
+      fi
+      echo "=== Devbox Configuration ==="
+      jq '.' "$CONFIG_FILE"
+      echo ""
+      echo "Bootstrap script: $RUNTIME_CONTAINER_INIT"
+      if [ -x "$RUNTIME_CONTAINER_INIT" ]; then
+        echo "Bootstrap script executable: yes"
+      elif [ -f "$RUNTIME_CONTAINER_INIT" ]; then
+        echo "Bootstrap script executable: no"
+      else
+        echo "Bootstrap script present: no"
+      fi
+      return 0
+    fi
+    log_error "No config found. Run: devbox init"
+    exit 1
+  fi
+
+  if [ -f "$CONFIG_FILE" ]; then
+    if ! config_is_valid; then
+      log_error "Invalid devbox config format. Run: devbox init --force"
+      exit 1
+    fi
+    jq . "$CONFIG_FILE"
+  else
+    log_error "No config found. Run: devbox init"
+    exit 1
+  fi
+}
+
+cmd_update() {
+  require_jq
+  local cfg key value tmp
+  cfg="$(load_valid_config)"
+  verify_current_identity_matches_config "$cfg"
+
+  if [ $# -eq 0 ]; then
+    log_error "Usage: devbox update <key>=<value>"
+    exit 1
+  fi
+
+  tmp="$(mktemp)"
+  cp "$CONFIG_FILE" "$tmp"
+  for arg in "$@"; do
+    key="${arg%%=*}"
+    value="${arg#*=}"
+    case "$key" in
+      image|type|shell) ;;
+      *) log_error "Field is immutable or unsupported for update: $key. Mutable fields: image, type, shell."; rm -f "$tmp"; exit 1 ;;
+    esac
+    validate_update_field "$key" "$value"
+    jq --arg k "$key" --arg v "$value" --arg updatedAt "$(date -Iseconds)" '.[$k] = $v | .updatedAt = $updatedAt' "$tmp" > "$tmp.next"
+    mv "$tmp.next" "$tmp"
+  done
+  mv "$tmp" "$CONFIG_FILE"
+  cfg="$(cat "$CONFIG_FILE")"
+  write_generated_files "$cfg"
+  log_info "Updated: $CONFIG_FILE"
+  jq . "$CONFIG_FILE"
+}
+
+cmd_status() {
+  local cfg container volume
+  cfg="$(config_for_docker_command)"
+  container="$(jq -r '.container' <<<"$cfg")"
+  volume="$(jq -r '.volumeName' <<<"$cfg")"
+
+  echo "Container: $container"
+  if container_exists "$container"; then
+    if container_running "$container"; then
+      echo "Status: ${GREEN}running${NC}"
+    else
+      echo "Status: ${YELLOW}stopped${NC}"
+    fi
+    docker ps -a --filter "name=^${container}$" --format "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" || { compose_failure_hint; exit 1; }
+  else
+    echo "Status: ${RED}not created${NC}"
+  fi
+  echo "HOME volume: $volume"
+  if volume_exists "$volume"; then
+    echo "Volume: present"
+  else
+    echo "Volume: not created"
+  fi
+}
+
+cmd_clean() {
+  local cfg container project volume
+  cfg="$(config_for_docker_command)"
+  container="$(jq -r '.container' <<<"$cfg")"
+  project="$(jq -r '.composeProject' <<<"$cfg")"
+  volume="$(jq -r '.volumeName' <<<"$cfg")"
+
+  log_warn "This will remove the dev container and project HOME volume."
+  echo "  Container: $container"
+  echo "  HOME volume: $volume"
+  read -p "Continue? [y/N] " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+  fi
+
+  remove_container_if_exists "$container"
+  compose_down "$project" -v
+  log_info "Cleaned dev container and HOME volume."
+}
+
+cmd_verify() {
+  local cfg container project volume
+  cfg="$(config_for_docker_command)"
+  container="$(jq -r '.container' <<<"$cfg")"
+  project="$(jq -r '.composeProject' <<<"$cfg")"
+  volume="$(jq -r '.volumeName' <<<"$cfg")"
+  local errors=0
+
+  echo "Verifying devbox setup..."
+  echo ""
+
+  # 1. Container exists?
+  echo -n "Container exists: "
+  if container_exists "$container"; then
+    echo -e "${GREEN}yes${NC}"
+  else
+    echo -e "${RED}no${NC}"
+    errors=$((errors + 1))
+  fi
+
+  # 2. Container running?
+  echo -n "Container running: "
+  if container_running "$container"; then
+    echo -e "${GREEN}yes${NC}"
+  else
+    echo -e "${RED}no${NC}"
+    errors=$((errors + 1))
+  fi
+
+  # 3. Entry works? (skip if container not running)
+  echo -n "Entry works: "
+  if [ "$errors" -gt 0 ]; then
+    echo -e "${YELLOW}skipped${NC}"
+  elif docker exec "$container" echo "devbox-verify-ok" >/dev/null 2>&1; then
+    echo -e "${GREEN}yes${NC}"
+  else
+    echo -e "${RED}no${NC}"
+    errors=$((errors + 1))
+  fi
+
+
+  # 4. Bootstrap marker? (skip if previous checks failed)
+  echo -n "Bootstrap marker: "
+  if [ "$errors" -gt 0 ]; then
+    echo -e "${YELLOW}skipped${NC}"
+  elif container_bootstrapped "$container"; then
+    echo -e "${GREEN}present${NC}"
+  else
+    echo -e "${RED}missing${NC}"
+    errors=$((errors + 1))
+  fi
+
+  # 5. .devbox hidden? (skip if previous checks failed)
+  echo -n ".devbox hidden: "
+  if [ "$errors" -gt 0 ]; then
+    echo -e "${YELLOW}skipped${NC}"
+  else
+    local devbox_count
+    if devbox_count="$(docker exec "$container" sh -c 'ls -A /app/.devbox/ 2>/dev/null | wc -l')" && [ "$devbox_count" -eq 0 ] 2>/dev/null; then
+      echo -e "${GREEN}yes${NC}"
+    else
+      echo -e "${RED}no${NC}"
+      errors=$((errors + 1))
+    fi
+  fi
+
+  # 6. HOME volume?
+  echo -n "HOME volume: "
+  if volume_exists "$volume"; then
+    echo -e "${GREEN}present${NC}"
+  else
+    echo -e "${YELLOW}not created${NC}"
+  fi
+
+  echo ""
+  if [ "$errors" -eq 0 ]; then
+    log_info "All checks passed! Container is ready."
+    echo "Run: devbox enter"
+    exit 0
+  else
+    log_error "$errors check(s) failed."
+    exit 1
+  fi
+}
+
+case "${1:-}" in
+  init) shift; cmd_init "$@" ;;
+  enter) cmd_enter ;;
+  stop) cmd_stop ;;
+  restart) cmd_restart ;;
+  rebuild) cmd_rebuild ;;
+  config) shift; cmd_config "$@" ;;
+  update) shift; cmd_update "$@" ;;
+  status) cmd_status ;;
+  verify) cmd_verify ;;
+  clean) cmd_clean ;;
+  -h|--help|help) usage ;;
+  *)
+    if [ -z "${1:-}" ]; then
+      usage
+    else
+      log_error "Unknown command: $1"
+      usage
+      exit 1
+    fi
+    ;;
+esac
