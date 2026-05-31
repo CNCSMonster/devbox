@@ -80,7 +80,6 @@ No command, including `init --force`, may take ownership of unlabeled or mismatc
   "imageName": "home-alice-work-client-a-backend-a1b2c3d4e5:dev",
   "volumeName": "home-alice-work-client-a-backend-a1b2c3d4e5-dev-home",
   "image": "ghcr.io/cncsmonster/dotfiles:latest",
-  "type": "python",
   "shell": "zsh",
   "identity": {
     "strategy": "full-path-hash-v1",

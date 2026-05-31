@@ -9,7 +9,6 @@ RUNTIME_CONTAINER_INIT="$RUNTIME_DIR/container-init.sh"
 IMAGE_RECIPE_DIR="$DEVBOX_DIR/image"
 
 DEFAULT_IMAGE="ghcr.io/cncsmonster/dotfiles:latest"
-DEFAULT_TYPE="python"
 DEVBOX_VERSION="1"
 IDENTITY_STRATEGY="full-path-hash-v1"
 
@@ -34,20 +33,19 @@ Commands:
   rebuild               Recreate dev container, preserving project HOME volume
   config                Show current configuration
   config show           Show current devbox configuration and bootstrap script path
-  update <key>=<val>    Update mutable configuration fields (image, type, shell)
+  update <key>=<val>    Update mutable configuration fields (image, shell)
   status                Show container status
   verify                Verify container is ready (no TTY required)
   clean                 Remove dev container and project HOME volume (destructive)
 
 Init options:
   --image <image>       Configured dev image tag (default: ghcr.io/cncsmonster/dotfiles:latest)
-  --type <type>         Project type: generic, python, node (default: python)
   --name <name>         Advanced: visible Docker/Compose resource name prefix
   --force               Overwrite local .devbox/ files; never bypasses ownership checks
 
 Examples:
   devbox init
-  devbox init --image ghcr.io/cncsmonster/dotfiles:stable --type python
+  devbox init --image ghcr.io/cncsmonster/dotfiles:stable
   devbox enter
   devbox config show
   devbox rebuild
@@ -205,13 +203,6 @@ container_running() {
   [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || true)" = "true" ]
 }
 
-validate_type() {
-  case "$1" in
-    generic|python|node) ;;
-    *) log_error "Invalid type: $1. Expected generic, python, or node."; exit 1 ;;
-  esac
-}
-
 validate_update_field() {
   local key="$1" value="$2"
   case "$key" in
@@ -221,14 +212,11 @@ validate_update_field() {
         exit 1
       fi
       ;;
-    type)
-      validate_type "$value"
-      ;;
   esac
 }
 
 candidate_json() {
-  local image="$1" type="$2" manual_name="$3"
+  local image="$1" manual_name="$2"
   local identity name container compose_project image_name volume_name now display_name
   identity="$(identity_json)"
   if [ -n "$manual_name" ]; then
@@ -251,11 +239,10 @@ candidate_json() {
     --arg imageName "$image_name" \
     --arg volumeName "$volume_name" \
     --arg image "$image" \
-    --arg type "$type" \
     --arg shell "zsh" \
     --argjson identity "$identity" \
     --arg createdAt "$now" \
-    '{version:$version,name:$name,displayName:$displayName,container:$container,composeProject:$composeProject,imageName:$imageName,volumeName:$volumeName,image:$image,type:$type,shell:$shell,identity:$identity,createdAt:$createdAt}'
+    '{version:$version,name:$name,displayName:$displayName,container:$container,composeProject:$composeProject,imageName:$imageName,volumeName:$volumeName,image:$image,shell:$shell,identity:$identity,createdAt:$createdAt}'
 }
 
 config_is_valid() {
@@ -268,7 +255,6 @@ config_is_valid() {
     and (.imageName == (.name + ":dev"))
     and (.volumeName == (.name + "-dev-home"))
     and (.image | type == "string" and length > 0)
-    and (.type | type == "string")
     and (.shell | type == "string" and length > 0)
     and (.identity.strategy == $strategy)
     and (.identity.projectRoot | type == "string" and length > 0)
@@ -541,20 +527,17 @@ cmd_init() {
   require_docker
 
   local image="$DEFAULT_IMAGE"
-  local type="$DEFAULT_TYPE"
   local manual_name=""
   local force=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --image) image="${2:?}"; shift 2 ;;
-      --type) type="${2:?}"; shift 2 ;;
       --name) manual_name="${2:?}"; shift 2 ;;
       --force) force=1; shift ;;
       *) log_error "Unknown option: $1"; usage; exit 1 ;;
     esac
   done
-  validate_type "$type"
 
   if [ -f "$CONFIG_FILE" ] && [ "$force" != "1" ]; then
     if config_is_valid; then
@@ -567,7 +550,7 @@ cmd_init() {
   fi
 
   local cfg
-  cfg="$(candidate_json "$image" "$type" "$manual_name")"
+  cfg="$(candidate_json "$image" "$manual_name")"
   ensure_existing_resources_owned "$cfg"
 
   write_config "$cfg"
@@ -739,8 +722,8 @@ cmd_update() {
     key="${arg%%=*}"
     value="${arg#*=}"
     case "$key" in
-      image|type|shell) ;;
-      *) log_error "Field is immutable or unsupported for update: $key. Mutable fields: image, type, shell."; rm -f "$tmp"; exit 1 ;;
+      image|shell) ;;
+      *) log_error "Field is immutable or unsupported for update: $key. Mutable fields: image, shell."; rm -f "$tmp"; exit 1 ;;
     esac
     validate_update_field "$key" "$value"
     jq --arg k "$key" --arg v "$value" --arg updatedAt "$(date -Iseconds)" '.[$k] = $v | .updatedAt = $updatedAt' "$tmp" > "$tmp.next"
