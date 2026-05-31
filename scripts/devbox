@@ -33,7 +33,6 @@ Commands:
   config                Show current configuration
   config show           Show current devbox configuration and bootstrap script path
   update <key>=<val>    Update mutable configuration fields (image, shell)
-  status                Show container status
   verify                Verify container is ready (no TTY required)
   clean                 Remove dev container and project HOME volume (destructive)
 
@@ -735,30 +734,6 @@ cmd_update() {
   jq . "$CONFIG_FILE"
 }
 
-cmd_status() {
-  local cfg container volume
-  cfg="$(config_for_docker_command)"
-  container="$(jq -r '.container' <<<"$cfg")"
-  volume="$(jq -r '.volumeName' <<<"$cfg")"
-
-  echo "Container: $container"
-  if container_exists "$container"; then
-    if container_running "$container"; then
-      echo "Status: ${GREEN}running${NC}"
-    else
-      echo "Status: ${YELLOW}stopped${NC}"
-    fi
-    docker ps -a --filter "name=^${container}$" --format "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" || { compose_failure_hint; exit 1; }
-  else
-    echo "Status: ${RED}not created${NC}"
-  fi
-  echo "HOME volume: $volume"
-  if volume_exists "$volume"; then
-    echo "Volume: present"
-  else
-    echo "Volume: not created"
-  fi
-}
 
 cmd_clean() {
   local cfg container project volume
@@ -876,7 +851,6 @@ case "${1:-}" in
   rebuild) cmd_rebuild ;;
   config) shift; cmd_config "$@" ;;
   update) shift; cmd_update "$@" ;;
-  status) cmd_status ;;
   verify) cmd_verify ;;
   clean) cmd_clean ;;
   -h|--help|help) usage ;;

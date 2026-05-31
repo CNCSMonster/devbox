@@ -242,7 +242,6 @@ printf 'y
 # Existing owned resources permit safe operations.
 (cd "$tmp/ops" && "$DEVBOX" init --name ops >/dev/null)
 export DEVBOX_FAKE_OWNED_NAME=ops
-(cd "$tmp/ops" && "$DEVBOX" status >/dev/null)
 (cd "$tmp/ops" && "$DEVBOX" stop >/dev/null)
 (cd "$tmp/ops" && "$DEVBOX" enter >/dev/null)
 (cd "$tmp/ops" && "$DEVBOX" verify >/dev/null)
