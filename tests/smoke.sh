@@ -158,7 +158,9 @@ grep -q 'image: ghcr.io/cncsmonster/dotfiles:latest' "$tmp/p1/same/.devbox/docke
 ! grep -q '^    build:' "$tmp/p1/same/.devbox/docker-compose.yml"
 # shellcheck disable=SC2251
 ! grep -q 'dockerfile: .devbox/runtime/Dockerfile' "$tmp/p1/same/.devbox/docker-compose.yml"
+# shellcheck disable=SC2251
 ! [ -e "$tmp/p1/same/.devbox/runtime/Dockerfile" ]
+# shellcheck disable=SC2251
 ! [ -e "$tmp/p1/same/.devbox/runtime/entrypoint.sh" ]
 grep -q 'Host-side devbox container bootstrap script' "$tmp/p1/same/.devbox/runtime/container-init.sh"
 # shellcheck disable=SC2251
