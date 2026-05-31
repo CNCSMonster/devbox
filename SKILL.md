@@ -290,7 +290,6 @@ Init options: `--image <tag>`, `--name <short>`.
 | `devbox enter` | Start/reuse container, bootstrap if needed, attach shell |
 | `devbox stop` | Stop container |
 | `devbox restart` | Restart, bootstrap if needed, attach shell |
-| `devbox status` | Show container state |
 | `devbox config` | Show current config.json |
 | `devbox config show` | Show config and bootstrap script path |
 | `devbox verify` | Run health checks (no TTY needed) |

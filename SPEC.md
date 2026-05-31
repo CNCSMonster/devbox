@@ -28,11 +28,9 @@ The Agent Skill is a guidance layer. It may help choose configuration, explain w
 
 All safety-critical behavior, including Docker availability checks, config validation, ownership checks, rebuild semantics, and destructive cleanup confirmation, must be enforced by the CLI.
 
-The CLI-owned config schema is the shared contract between humans and agents. Agents should use the CLI to create or update `.devbox/` so their container setup conforms to the same schema and behavior that humans later use through `devbox enter`, `devbox rebuild`, `devbox status`, and related commands.
 
 A devbox environment configured by an agent must remain operable by a human through the CLI without requiring the original agent session. Human handoff means operational usability, not full understanding of devbox internals.
 
-Humans should be able to use common commands such as `devbox enter`, `devbox rebuild`, `devbox status`, `devbox stop`, and `devbox config` without understanding Docker labels, identity hashes, Docker image modes, or generated runtime files.
 
 ## Normative Behavior
 
