@@ -154,11 +154,14 @@ jq -e '
 grep -q 'devbox.managed: "true"' "$tmp/p1/same/.devbox/docker-compose.yml"
 grep -q 'devbox.identity_hash: "sha256:' "$tmp/p1/same/.devbox/docker-compose.yml"
 grep -q 'image: ghcr.io/cncsmonster/dotfiles:latest' "$tmp/p1/same/.devbox/docker-compose.yml"
+# shellcheck disable=SC2251
 ! grep -q '^    build:' "$tmp/p1/same/.devbox/docker-compose.yml"
+# shellcheck disable=SC2251
 ! grep -q 'dockerfile: .devbox/runtime/Dockerfile' "$tmp/p1/same/.devbox/docker-compose.yml"
 ! [ -e "$tmp/p1/same/.devbox/runtime/Dockerfile" ]
 ! [ -e "$tmp/p1/same/.devbox/runtime/entrypoint.sh" ]
 grep -q 'Host-side devbox container bootstrap script' "$tmp/p1/same/.devbox/runtime/container-init.sh"
+# shellcheck disable=SC2251
 ! grep -q '/host-config/codex' "$tmp/p1/same/.devbox/docker-compose.yml"
 grep -q "name: $(jq -r .volumeName "$tmp/p1/same/.devbox/config.json")" "$tmp/p1/same/.devbox/docker-compose.yml"
 
@@ -231,6 +234,7 @@ grep -q 'bootstrap boot-dev' "$tmp/bootstrap.log"
 printf 'y
 ' | (cd "$tmp/bootstrap" && "$DEVBOX" rebuild >/dev/null)
 [ "$(grep -c 'bootstrap boot-dev' "$tmp/bootstrap.log")" -eq 2 ]
+# shellcheck disable=SC2251
 ! grep -q -- '--build' "$tmp/compose.log"
 
 # Existing owned resources permit safe operations.
@@ -242,8 +246,10 @@ export DEVBOX_FAKE_OWNED_NAME=ops
 (cd "$tmp/ops" && "$DEVBOX" verify >/dev/null)
 printf 'y\n' | (cd "$tmp/ops" && "$DEVBOX" rebuild >/dev/null)
 grep -q -- '--force-recreate' "$tmp/compose.log"
+# shellcheck disable=SC2251
 ! grep -q -- ' down .* -v' "$tmp/compose.log"
 printf 'n\n' | (cd "$tmp/ops" && "$DEVBOX" clean >/dev/null)
+# shellcheck disable=SC2251
 ! grep -q -- ' down .* -v' "$tmp/compose.log"
 unset DEVBOX_FAKE_OWNED_NAME
 
