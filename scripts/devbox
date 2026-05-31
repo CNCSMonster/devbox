@@ -868,6 +868,7 @@ cmd_verify() {
   fi
 }
 
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 case "${1:-}" in
   init) shift; cmd_init "$@" ;;
   enter) cmd_enter ;;
@@ -890,3 +891,4 @@ case "${1:-}" in
     fi
     ;;
 esac
+fi
