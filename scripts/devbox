@@ -33,7 +33,7 @@ Commands:
   rebuild               Recreate dev container, preserving project HOME volume
   config                Show current configuration
   config show           Show current devbox configuration and bootstrap script path
-  update <key>=<val>    Update mutable configuration fields (image, type, shell)
+  update <key>=<val>    Update mutable configuration fields (image, shell)
   status                Show container status
   verify                Verify container is ready (no TTY required)
   clean                 Remove dev container and project HOME volume (destructive)
