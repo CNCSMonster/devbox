@@ -6,7 +6,6 @@ CONFIG_FILE="$DEVBOX_DIR/config.json"
 COMPOSE_FILE="$DEVBOX_DIR/docker-compose.yml"
 RUNTIME_DIR="$DEVBOX_DIR/runtime"
 RUNTIME_CONTAINER_INIT="$RUNTIME_DIR/container-init.sh"
-IMAGE_RECIPE_DIR="$DEVBOX_DIR/image"
 
 DEFAULT_IMAGE="ghcr.io/cncsmonster/dotfiles:latest"
 DEVBOX_VERSION="1"
