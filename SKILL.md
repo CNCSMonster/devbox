@@ -68,7 +68,7 @@ description: 为项目配置 Docker 开发容器环境。当用户通过 /devbox
   1. devbox init --image <image>
   2. 按方案编辑 .devbox/runtime/container-init.sh（如需要）
   3. devbox enter（首次 create/start/bootstrap/attach；后续只 attach）
-  4. devbox verify
+  4. devbox status
 ```
 
 ## Host-side container-init.sh
@@ -277,7 +277,7 @@ devbox config show
 # 如需项目/用户初始化，编辑 .devbox/runtime/container-init.sh
 
 devbox enter
-devbox verify
+devbox status
 ```
 
 Init options: `--image <tag>`, `--name <short>`.
@@ -292,7 +292,7 @@ Init options: `--image <tag>`, `--name <short>`.
 | `devbox restart` | Restart, bootstrap if needed, attach shell |
 | `devbox config` | Show current config.json |
 | `devbox config show` | Show config and bootstrap script path |
-| `devbox verify` | Run health checks (no TTY needed) |
+| `devbox status` | Run health checks (no TTY needed) |
 | `devbox update key=val` | Update mutable fields (image, shell) |
 | `devbox rebuild` | Recreate, start, and bootstrap container; preserve HOME volume |
 | `devbox clean` | Remove container + HOME volume (destructive) |

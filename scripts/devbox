@@ -33,7 +33,7 @@ Commands:
   config                Show current configuration
   config show           Show current devbox configuration and bootstrap script path
   update <key>=<val>    Update mutable configuration fields (image, shell)
-  verify                Verify container is ready (no TTY required)
+  status                Show container status (no TTY required)
   clean                 Remove dev container and project HOME volume (destructive)
 
 Init options:
@@ -279,7 +279,7 @@ load_valid_config() {
   cat "$CONFIG_FILE"
 }
 
-verify_current_identity_matches_config() {
+status_current_identity_matches_config() {
   local cfg="$1" current expected actual expected_root actual_root
   current="$(identity_json)"
   expected="$(jq -r '.identity.identityHash' <<<"$cfg")"
@@ -569,7 +569,7 @@ config_for_docker_command() {
   require_docker
   local cfg
   cfg="$(load_valid_config)"
-  verify_current_identity_matches_config "$cfg"
+  status_current_identity_matches_config "$cfg"
   ensure_existing_resources_owned "$cfg"
   printf '%s' "$cfg"
 }
@@ -707,7 +707,7 @@ cmd_update() {
   require_jq
   local cfg key value tmp
   cfg="$(load_valid_config)"
-  verify_current_identity_matches_config "$cfg"
+  status_current_identity_matches_config "$cfg"
 
   if [ $# -eq 0 ]; then
     log_error "Usage: devbox update <key>=<value>"
@@ -757,7 +757,7 @@ cmd_clean() {
   log_info "Cleaned dev container and HOME volume."
 }
 
-cmd_verify() {
+cmd_status() {
   local cfg container project volume
   cfg="$(config_for_docker_command)"
   container="$(jq -r '.container' <<<"$cfg")"
@@ -790,7 +790,7 @@ cmd_verify() {
   echo -n "Entry works: "
   if [ "$errors" -gt 0 ]; then
     echo -e "${YELLOW}skipped${NC}"
-  elif docker exec "$container" echo "devbox-verify-ok" >/dev/null 2>&1; then
+  elif docker exec "$container" echo "devbox-status-ok" >/dev/null 2>&1; then
     echo -e "${GREEN}yes${NC}"
   else
     echo -e "${RED}no${NC}"
@@ -851,7 +851,7 @@ case "${1:-}" in
   rebuild) cmd_rebuild ;;
   config) shift; cmd_config "$@" ;;
   update) shift; cmd_update "$@" ;;
-  verify) cmd_verify ;;
+  status) cmd_status ;;
   clean) cmd_clean ;;
   -h|--help|help) usage ;;
   *)

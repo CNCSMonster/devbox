@@ -244,7 +244,7 @@ printf 'y
 export DEVBOX_FAKE_OWNED_NAME=ops
 (cd "$tmp/ops" && "$DEVBOX" stop >/dev/null)
 (cd "$tmp/ops" && "$DEVBOX" enter >/dev/null)
-(cd "$tmp/ops" && "$DEVBOX" verify >/dev/null)
+(cd "$tmp/ops" && "$DEVBOX" status >/dev/null)
 printf 'y\n' | (cd "$tmp/ops" && "$DEVBOX" rebuild >/dev/null)
 grep -q -- '--force-recreate' "$tmp/compose.log"
 # shellcheck disable=SC2251

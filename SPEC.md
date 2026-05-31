@@ -58,7 +58,7 @@ Devbox v1 optimizes for three user-facing workflows. Users should not need to re
    1. Run `devbox init` and confirm config files exist.
    2. Run `devbox config` and confirm valid v1 config.
    3. Start/create the container through `devbox enter` when a TTY is available, or through the generated Compose file plus the same bootstrap step that `devbox enter` would perform when running non-interactively.
-   4. Run `devbox verify` and confirm all checks pass.
+   4. Run `devbox status` and confirm all checks pass.
 
    After verification passes, the user enters with:
 
@@ -604,7 +604,7 @@ coreutils
 9. 手动 `--name` 时配置中使用清洗后的 name。
 10. 在默认 image mode 下，生成的 Compose 文件直接使用 `config.image`，不要求 `.devbox/runtime/Dockerfile`。
 11. 如项目显式 opt into build mode，生成的 Compose/Dockerfile 能成功构建并启动容器。
-12. `devbox verify` 通过所有检查（entry 可用、.devbox 隐藏、已初始化容器有 bootstrap marker）。
+12. `devbox status` 通过所有检查（entry 可用、.devbox 隐藏、已初始化容器有 bootstrap marker）。
 
 默认不执行（需要用户明确要求）：
 
@@ -614,7 +614,7 @@ devbox rebuild # 有确认提示
 devbox clean   # 破坏性操作
 ```
 
-AI 使用 `devbox verify` 验证容器可用性，无需 TTY。
+AI 使用 `devbox status` 验证容器可用性，无需 TTY。
 
 ## Boundaries
 
@@ -651,8 +651,8 @@ AI 使用 `devbox verify` 验证容器可用性，无需 TTY。
 
 ### Always verify (AI)
 
-- AI 配置 devbox 后，必须运行 `devbox verify` 验证容器可用。
-- 只有 `devbox verify` 通过后才能报告“配置完成”。
+- AI 配置 devbox 后，必须运行 `devbox status` 验证容器可用。
+- 只有 `devbox status` 通过后才能报告“配置完成”。
 
 ## Success Criteria
 

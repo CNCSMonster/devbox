@@ -195,4 +195,4 @@ v1 does not support old-format configs or unlabeled Docker resources. If `.devbo
 3. Default compose uses `image: ${image}` and does not require `.devbox/runtime/Dockerfile`.
 4. Container and volume have `devbox.*` labels.
 5. Host-side bootstrap marker exists in initialized containers: `/tmp/.container-init-executed`.
-6. `devbox verify` passes all checks.
+6. `devbox status` passes all checks.
