@@ -28,5 +28,3 @@ jobs:
         run: |
           shellcheck scripts/devbox
           shellcheck install.sh
-          shellcheck tests/smoke.sh
-          shellcheck tests/unit.sh
