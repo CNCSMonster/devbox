@@ -40,6 +40,19 @@ volumeName     = ${name}-dev-home
 
 Volume names use hyphens, not underscores.
 
+### Name Length Limits (实测)
+
+| 资源 | 实测结果 |
+|------|---------|
+| 容器/网络名称 | 总长超过 ~52 字符时 Docker 内部 DNS 解析失败；`docker compose` 仍能正常启动 |
+| 卷名称 | 无问题 |
+
+- 失败特征：内部 DNS（`127.0.0.11`）返回 `Message too large`——UDP 响应超 512 字节；RFC 1035 限制 hostname 单段 ≤63 字符，Docker 实际阈值更低。
+- 影响面：仅容器间按名称互访失败，容器本身运行正常。
+- devbox 生成的名称（slug+hash10）实测 44–48 字符，在安全范围内。
+- 设计决策：**不自动截断长名字**；仅在 docker compose 真实失败时提示 `devbox init --name <短名> --force` 手动命名。
+- 同类案例：GitLab Runner docker executor（issue #27763）。
+
 ## Docker Ownership Labels
 
 Both container and volume carry `devbox.*` labels:
