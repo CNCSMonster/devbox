@@ -156,6 +156,58 @@ docker exec "$container" mkdir -p /root/.agents/skills
 docker cp "$tmp/skills/." "$container:/root/.agents/skills/"
 ```
 
+**规则：从宿主机复制配置文件时，替换宿主机路径引用为容器内路径。**
+
+宿主机 config.toml 中可能包含 `$HOME/.codex/model_catalog.json` 等宿主机路径。
+复制到容器后路径失效（容器 HOME 是 `/root/`，工作目录是 `/app/`）。
+
+```bash
+# 在 docker cp 之前，宿主机 staging 目录中修复路径
+sed -i "s|$HOME/.codex|/root/.codex|g" "$tmp/config.toml"
+```
+
+**规则：修改配置文件（TOML/YAML/JSON）时，执行"检查→修改→验证"三阶段。**
+
+```
+修改前: 检查文件结构（末尾表声明、已有 key 位置）
+修改时: 根级 key 插顶部（在第一个 [table] 前），子表 key 确保在正确 [section] 下
+修改后: grep -c 验证唯一性，检查不在错误层级
+```
+
+**Why:** TOML 文件末尾若是嵌套子表（如 `[tui.model_availability_nux]`），追加内容会被解析器归属到该子表内，导致类型冲突或字段覆盖。
+
+```bash
+# ❌ 错误：追加到末尾，被归属到最后一个子表
+cat >> config.toml << 'EOF'
+approval_policy = "never"
+...
+EOF
+
+# ✅ 正确：插入到顶部
+tmp_toml="$(mktemp)"
+cat > "$tmp_toml" << 'EOF'
+approval_policy = "never"
+...
+EOF
+cat config.toml >> "$tmp_toml"
+mv "$tmp_toml" config.toml
+
+# ✅ 修改后验证：grep -c 确认唯一
+grep -c "approval_policy" config.toml  # 必须 = 1
+grep -n "approval_policy" config.toml  # 检查行号（应在第一个 [table] 之前）
+```
+
+**规则：精简 entrypoint.sh 后，检查是否有逻辑需要迁移到 container-init.sh。**
+
+entrypoint.sh 在容器启动时运行，container-init.sh 仅在首次初始化时运行。
+如果将 entrypoint.sh 精简为纯 `exec`，需要确保以下逻辑已补偿：
+
+| 旧 entrypoint 逻辑 | 迁移目标 |
+|-------------------|---------|
+| 一次性复制/安装（codex config、npm 包） | container-init.sh |
+| 配置文件路径修复（localhost → host.docker.internal、HOME 路径） | container-init.sh |
+| 运行时路径设置（PATH export） | entrypoint.sh（保留） |
+
 ### 常用 Docker 命令模式
 
 | 操作 | 命令 |
@@ -203,23 +255,6 @@ if [ -d "$HOME/.codex" ]; then
   fi
   docker exec "$container" mkdir -p /root/.codex
   docker cp "$tmp/." "$container:/root/.codex/"
-  # YOLO 权限（根据 devbox-norms.md）
-  docker exec "$container" bash -lc '
-    if ! grep -q "default_permissions" /root/.codex/config.toml 2>/dev/null; then
-      cat >> /root/.codex/config.toml << '"'"'YOLOEOF'"'"'
-
-default_permissions = "yolo"
-
-[permissions.yolo]
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-
-[permissions.yolo.network]
-enabled = true
-mode = "full"
-YOLOEOF
-    fi
-  '
 fi
 
 # ── 3. 复制 Agent Skills（跨 symlink）──────────────────────────
